@@ -1,0 +1,566 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * <h2><center>&copy; Copyright (c) 2022 STMicroelectronics.
+  * All rights reserved.</center></h2>
+  *
+  * This software component is licensed by ST under BSD 3-Clause license,
+  * the "License"; You may not use this file except in compliance with the
+  * License. You may obtain a copy of the License at:
+  *                        opensource.org/licenses/BSD-3-Clause
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <ctype.h>
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define UART_RX_BUFFER_SIZE 128
+#define MAX_NOTES 50
+
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+typedef struct {
+    uint16_t frequency; // Частота ноты (Гц)
+    uint16_t duration;  // Длительность ноты (мс)
+} Note;
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_UART4_Init(void);
+static void MX_TIM1_Init(void);
+
+static void PlayMelody(const Note *melody);
+static void SetTone(uint16_t freq);
+static void StopTone(void);
+static void HandleUARTCommand(uint8_t c);
+static void EnterUserMode(void);
+static void ProcessUserInputLine(char *line);
+static void SendString(const char *str);
+
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+// ----- RingBuffer -----
+
+
+
+/* Четыре стандартные мелодии - можно определить их вручную */
+static const Note melody1[] = {
+    {440, 500}, {0, 250}, {440, 500}, {0, 250}, {440, 500}, {0, 250}, // ноты A4 и паузы
+    {0,0} // Окончание
+};
+
+static const Note melody2[] = {
+    {523, 500}, {587, 500}, {659, 500}, {0,250}, {659, 500}, {587, 500}, {523, 500}, {0,500},
+    {0,0}
+};
+
+static const Note melody3[] = {
+    {660, 300}, {660, 300}, {0,300}, {660,300}, {0,100}, {510,300}, {660,300}, {770,700}, {0,300},
+    {0,0}
+};
+
+static const Note melody4[] = {
+    {294, 400}, {294, 400}, {330, 400}, {294, 400}, {392, 800}, {370, 1600},
+    {0,0}
+};
+
+
+static Note userMelody[MAX_NOTES];
+static uint8_t userNoteCount = 0;
+
+
+
+UART_HandleTypeDef huart4;
+TIM_HandleTypeDef htim1;
+
+/* Буфер для приема UART */
+static uint8_t uartRxBuffer[UART_RX_BUFFER_SIZE];
+static uint8_t uartRxIndex = 0;
+
+/* Режимы работы */
+typedef enum {
+    MODE_NORMAL,
+    MODE_USER_INPUT
+} AppMode;
+
+static AppMode currentMode = MODE_NORMAL;
+// ----- UART -----
+
+
+
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef * htim) {
+	if (htim->Instance == TIM6) {
+        if (!melody_playing) {
+            return;
+        }
+		if (duration > 0) duration--;
+		if (duration == 0) {
+			if (melody[i] == 0) {
+				// Выключаем звук
+				htim1.Instance->CCR1 = 0; // 0%
+				duration = melody_delays[i];
+			} else {
+				// Проигрываем ноты
+				duration = melody_delays[i];
+				htim1.Instance->ARR = 90000000 / (melody[i] * htim1.Instance->PSC) - 1;
+     			htim1.Instance->CCR1 = htim1.Instance->ARR >> 1; // 50% громкость (100%) - скважность
+			}
+			i++;
+			if (i == melody_size){
+                i = 0;
+                duration = 1;
+                melody_playing = false;
+
+                // Выключаем звук
+                htim1.Instance->CCR1 = 0; // 0%
+            }
+		}
+	}
+}
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_UART4_Init();
+  MX_TIM1_Init();
+  /* USER CODE BEGIN 2 */
+//  uint8_t a = 0x70;
+//  HAL_I2C_Mem_Write(&hi2c1, KB_I2C_WRITE_ADDRESS, KB_CONFIG_REG, 1, &a, 1, 100);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  StopTone();
+
+  HAL_UART_Receive_IT(&huart4, (uint8_t *)&uartRxBuffer[uartRxIndex], 1);
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+     {
+         /* Основной цикл пока пуст. Вся логика обработки команд - в прерывании UART. */
+         HAL_Delay(100);
+     }
+
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+
+
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  /** Initializes the CPU, AHB and APB busses clocks
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 15;
+  RCC_OscInitStruct.PLL.PLLN = 216;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Initializes the CPU, AHB and APB busses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+ * @brief Воспроизвести заданную мелодию.
+ *        Мелодия - массив структур Note, оканчивается нотой {0,0}.
+ */
+static void PlayMelody(const Note *melody)
+{
+    uint8_t i = 0;
+    while (melody[i].frequency != 0 || melody[i].duration != 0) {
+        if (melody[i].frequency > 0) {
+            SetTone(melody[i].frequency);
+        } else {
+            StopTone();
+        }
+        HAL_Delay(melody[i].duration);
+        i++;
+    }
+    StopTone();
+}
+
+
+
+/**
+ * @brief Установить частоту тона.
+ * freq - частота в Гц.
+ */
+static void SetTone(uint16_t freq)
+{
+    if (freq == 0) {
+        StopTone();
+        return;
+    }
+
+    /* Предположим, что TIM1 тактируется от 180 MHz.
+       Для получения нужной частоты f:
+       Period = TIM_CLK / freq.
+       Если TIM_CLK = 180MHz, для звуков в диапазоне 100-2000 Гц,
+       нужно выставить делитель.
+
+       Давайте выберем прескейлер так, чтобы таймер "шел" медленнее.
+       Допустим, прескейлер = 179, тогда частота таймера: 180MHz / (179+1) = 1 MHz.
+       Тогда ARR = 1MHz / freq - 1.
+
+       CCR1 = ARR/2 для 50% duty cycle.
+    */
+    uint32_t psc = 179;
+    uint32_t timer_clk = 180000000UL / (psc + 1); // 1 MHz
+    uint32_t arr = (timer_clk / freq) - 1;
+    __HAL_TIM_SET_PRESCALER(&htim1, psc);
+    __HAL_TIM_SET_AUTORELOAD(&htim1, arr);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, arr/2);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+}
+
+/**
+ * @brief Остановить звук (PWM duty = 0)
+ */
+static void StopTone(void)
+{
+    /* Установить Compare = 0, чтобы не было сигнала */
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+}
+/**
+ * @brief Обработать входящий символ UART.
+ */
+static void HandleUARTCommand(uint8_t c)
+{
+    if (currentMode == MODE_NORMAL) {
+        /* Если обычный режим */
+        if (c >= '1' && c <= '4') {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Воспроизведение стандартной мелодии %c...\r\n", c);
+            SendString(msg);
+            switch (c) {
+                case '1':
+                    PlayMelody(melody1);
+                    break;
+                case '2':
+                    PlayMelody(melody2);
+                    break;
+                case '3':
+                    PlayMelody(melody3);
+                    break;
+                case '4':
+                    PlayMelody(melody4);
+                    break;
+            }
+            SendString("Мелодия завершена.\r\n");
+        } else if (c == '5') {
+            SendString("Воспроизведение пользовательской мелодии...\r\n");
+            if (userNoteCount > 0) {
+                PlayMelody(userMelody);
+            } else {
+                SendString("Пользовательская мелодия пуста.\r\n");
+            }
+        } else if (c == '\r' || c == '\n') {
+            /* Вход в режим ввода пользовательской мелодии */
+            EnterUserMode();
+        } else {
+            /* Неизвестная команда */
+            SendString("Неизвестная команда. Нажмите '1'-'4', '5', или Enter.\r\n");
+        }
+    } else {
+        /* Режим ввода пользовательской мелодии.
+           В этом режиме мы собираем строку до Enter, потом парсим. */
+        static char lineBuffer[64];
+        static uint8_t lineIndex = 0;
+
+        if (c == '\r' || c == '\n') {
+            /* Конец строки */
+            lineBuffer[lineIndex] = '\0';
+            if (lineIndex == 0) {
+                /* Пустая строка - завершение ввода */
+                SendString("Ввод завершен.\r\n");
+                currentMode = MODE_NORMAL;
+                userNoteCount = userNoteCount < MAX_NOTES ? userNoteCount : MAX_NOTES;
+                return;
+            }
+            ProcessUserInputLine(lineBuffer);
+            lineIndex = 0;
+        } else {
+            /* Накопление символов в строку */
+            if (lineIndex < sizeof(lineBuffer)-1) {
+                lineBuffer[lineIndex++] = c;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Войти в режим ввода пользовательской мелодии.
+ */
+static void EnterUserMode(void)
+{
+    SendString("Режим ввода пользовательской мелодии. Введите пары 'частота длительность' построчно.\r\n");
+    SendString("Пустая строка завершит ввод.\r\n");
+    currentMode = MODE_USER_INPUT;
+    userNoteCount = 0;
+}
+
+
+/**
+ * @brief Обработка введенной строки в режиме пользовательского ввода.
+ *        Формат: "частота длительность"
+ */
+static void ProcessUserInputLine(char *line)
+{
+    char *freqStr = strtok(line, " \t");
+    char *durStr = strtok(NULL, " \t");
+
+    if (!freqStr || !durStr) {
+        SendString("Некорректный формат. Введите 'частота длительность'.\r\n");
+        return;
+    }
+
+    uint16_t freq = (uint16_t)atoi(freqStr);
+    uint16_t dur = (uint16_t)atoi(durStr);
+
+    if (freq > 0 && dur > 0 && userNoteCount < MAX_NOTES) {
+        userMelody[userNoteCount].frequency = freq;
+        userMelody[userNoteCount].duration = dur;
+        userNoteCount++;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Добавлена нота: %u Гц, %u мс.\r\n", freq, dur);
+        SendString(msg);
+    } else {
+        SendString("Ошибка при добавлении ноты. Частота и длительность должны быть > 0.\r\n");
+    }
+}
+
+/**
+ * @brief Отправка строки по UART.
+ */
+static void SendString(const char *str)
+{
+    HAL_UART_Transmit(&huart4, (uint8_t *)str, strlen(str), HAL_MAX_DELAY);
+}
+
+/**
+ * @brief Инициализация UART4.
+ * Предполагается, что на плате UART4 настроен на вывод отладочных сообщений.
+ */
+static void MX_UART4_Init(void)
+{
+    huart4.Instance = UART4;
+    huart4.Init.BaudRate = 115200;
+    huart4.Init.WordLength = UART_WORDLENGTH_8B;
+    huart4.Init.StopBits = UART_STOPBITS_1;
+    huart4.Init.Parity = UART_PARITY_NONE;
+    huart4.Init.Mode = UART_MODE_TX_RX;
+    huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+    if (HAL_UART_Init(&huart4) != HAL_OK) {
+        /* Error Handler */
+    }
+}
+/**
+ * @brief Инициализация TIM1 для PWM.
+ * Настраиваем канал TIM1_CH1 для вывода PWM.
+ */
+static void MX_TIM1_Init(void)
+{
+    TIM_OC_InitTypeDef sConfigOC = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+    htim1.Instance = TIM1;
+    htim1.Init.Prescaler = 179; // будет меняться динамически в SetTone()
+    htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim1.Init.Period = 999; // будет меняться динамически
+    htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+    htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_PWM_Init(&htim1) != HAL_OK) {
+        /* Error Handler */
+    }
+
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK) {
+        /* Error Handler */
+    }
+
+    sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+    sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+    sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+    sBreakDeadTimeConfig.DeadTime = 0;
+    sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+    sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+    sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+    if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK) {
+        /* Error Handler */
+    }
+
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.Pulse = 500;
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+    sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+    if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+        /* Error Handler */
+    }
+
+    /* Настроить вывод пина в GPIO_Init */
+}
+/**
+ * @brief Инициализация GPIO.
+ */
+static void MX_GPIO_Init(void)
+{
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    /* TIM1_CH1 на PA8 (AF1) */
+    GPIO_InitStruct.Pin = GPIO_PIN_8;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
+
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

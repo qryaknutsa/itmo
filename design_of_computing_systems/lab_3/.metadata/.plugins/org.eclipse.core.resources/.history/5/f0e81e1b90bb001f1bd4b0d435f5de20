@@ -1,0 +1,241 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2024.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+// Структура для описания ноты
+typedef struct {
+    uint32_t frequency; // Частота ноты (Гц). 0 означает паузу.
+    uint32_t duration;  // Длительность ноты (мс).
+} MelodyNote;
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define ENTER_ASCII '\r' // Код клавиши ENTER
+#define MAX_USER_MELODY_NOTES 32 // Максимальное количество нот в пользовательской мелодии
+/* USER CODE END PD */
+
+/* Private variables ---------------------------------------------------------*/
+/* USER CODE BEGIN PV */
+// Предопределенные мелодии
+MelodyNote melody1[] = {
+    {440, 500}, {0, 250}, {440, 500}, {0, 250}, {440, 500}, {0, 250}
+};
+MelodyNote melody2[] = {
+    {262, 400}, {294, 400}, {330, 400}, {349, 400}, {392, 400}, {440, 400}, {494, 400}
+};
+MelodyNote melody3[] = {
+    {523, 200}, {587, 200}, {659, 200}, {698, 200}, {784, 200}, {880, 200}, {988, 200}
+};
+MelodyNote melody4[] = {
+    {784, 300}, {880, 300}, {988, 300}, {1047, 300}, {1175, 300}
+};
+
+// Пользовательская мелодия
+MelodyNote userMelody[MAX_USER_MELODY_NOTES];
+uint8_t userMelodyLength = 0;
+
+char buf_char[2] = {0}; // Буфер для считывания символов UART
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+void play_note(uint32_t frequency, uint32_t duration);
+void play_melody(MelodyNote *melody, uint8_t length);
+void add_note_to_user_melody(uint32_t frequency, uint32_t duration);
+void configure_user_melody(void);
+uint32_t uart_read_number(void);
+void uart_write(const char *data);
+void uart_read_char(void);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/**
+  * @brief Воспроизведение одной ноты
+  * @param frequency Частота ноты (Гц)
+  * @param duration Длительность ноты (мс)
+  */
+void play_note(uint32_t frequency, uint32_t duration) {
+    if (frequency > 0) {
+        htim1.Instance->ARR = (1000000 / frequency) - 1; // Устанавливаем частоту PWM
+        htim1.Instance->CCR1 = htim1.Instance->ARR >> 1; // Устанавливаем скважность 50%
+    } else {
+        htim1.Instance->CCR1 = 0; // Отключаем звук (пауза)
+    }
+    HAL_Delay(duration); // Ждем заданную длительность
+}
+
+/**
+  * @brief Воспроизведение мелодии
+  * @param melody Указатель на массив нот
+  * @param length Количество нот в мелодии
+  */
+void play_melody(MelodyNote *melody, uint8_t length) {
+    for (uint8_t i = 0; i < length; i++) {
+        play_note(melody[i].frequency, melody[i].duration);
+        HAL_Delay(50); // Небольшая пауза между нотами
+    }
+    play_note(0, 0); // Останавливаем звук в конце мелодии
+}
+
+/**
+  * @brief Добавление ноты в пользовательскую мелодию
+  * @param frequency Частота ноты (Гц)
+  * @param duration Длительность ноты (мс)
+  */
+void add_note_to_user_melody(uint32_t frequency, uint32_t duration) {
+    if (userMelodyLength < MAX_USER_MELODY_NOTES) {
+        userMelody[userMelodyLength].frequency = frequency;
+        userMelody[userMelodyLength].duration = duration;
+        userMelodyLength++;
+    }
+}
+
+/**
+  * @brief Настройка пользовательской мелодии
+  */
+void configure_user_melody(void) {
+    uint32_t frequency = 0;
+    uint32_t duration = 0;
+
+    userMelodyLength = 0; // Сбрасываем текущую мелодию
+
+    uart_write("\n\rEntering melody configuration mode. Enter notes one by one.\n\r");
+
+    while (1) {
+        uart_write("\n\rEnter frequency (Hz, 0 to finish): ");
+        frequency = uart_read_number();
+        if (frequency == 0) {
+            break; // Завершаем ввод
+        }
+
+        uart_write("\n\rEnter duration (ms): ");
+        duration = uart_read_number();
+
+        add_note_to_user_melody(frequency, duration);
+        uart_write("\n\rNote added.\n\r");
+    }
+
+    uart_write("\n\rUser melody saved.\n\r");
+}
+
+/**
+  * @brief Считывание числа из UART
+  * @retval Число, введенное пользователем
+  */
+uint32_t uart_read_number(void) {
+    char num_buffer[16] = {0};
+    uint8_t index = 0;
+
+    while (1) {
+        uart_read_char();
+        if (buf_char[0] == '\r') {
+            break; // Завершаем ввод по нажатию Enter
+        }
+        if (index < sizeof(num_buffer) - 1) {
+            num_buffer[index++] = buf_char[0];
+        }
+    }
+
+    return (uint32_t)atoi(num_buffer); // Преобразуем строку в число
+}
+
+/**
+  * @brief Отправка строки через UART
+  * @param data Указатель на строку
+  */
+void uart_write(const char *data) {
+    HAL_UART_Transmit(&huart6, (uint8_t *)data, strlen(data), HAL_MAX_DELAY);
+}
+
+/**
+  * @brief Чтение символа из UART
+  */
+void uart_read_char(void) {
+    HAL_UART_Receive(&huart6, (uint8_t *)buf_char, 1, HAL_MAX_DELAY);
+}
+
+/**
+  * @brief Основной цикл программы
+  */
+int main(void) {
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_TIM1_Init();
+    MX_USART6_UART_Init();
+
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+    uart_write("\n\rWelcome to the music box!\n\r");
+
+    while (1) {
+        uart_read_char();
+
+        if (buf_char[0] == '\0') {
+            continue;
+        }
+
+        switch (buf_char[0]) {
+            case '1':
+                uart_write("\n\rPlaying standard melody 1\n\r");
+                play_melody(melody1, sizeof(melody1) / sizeof(MelodyNote));
+                break;
+            case '2':
+                uart_write("\n\rPlaying standard melody 2\n\r");
+                play_melody(melody2, sizeof(melody2) / sizeof(MelodyNote));
+                break;
+            case '3':
+                uart_write("\n\rPlaying standard melody 3\n\r");
+                play_melody(melody3, sizeof(melody3) / sizeof(MelodyNote));
+                break;
+            case '4':
+                uart_write("\n\rPlaying standard melody 4\n\r");
+                play_melody(melody4, sizeof(melody4) / sizeof(MelodyNote));
+                break;
+            case '5':
+                uart_write("\n\rPlaying user-defined melody\n\r");
+                play_melody(userMelody, userMelodyLength);
+                break;
+            case ENTER_ASCII:
+                configure_user_melody();
+                break;
+            default:
+                uart_write("\n\rInvalid command. Please try again.\n\r");
+                break;
+        }
+    }
+}
+
+/* USER CODE END 0 */

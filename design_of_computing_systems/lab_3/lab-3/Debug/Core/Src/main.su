@@ -1,0 +1,14 @@
+../Core/Src/main.c:141:6:is_digit_char	16	static
+../Core/Src/main.c:145:13:uart_write	24	static
+../Core/Src/main.c:154:6:play_sound	16	static
+../Core/Src/main.c:167:6:stop_sound	4	static
+../Core/Src/main.c:172:6:stop_timer	8	static
+../Core/Src/main.c:179:6:set_timer	16	static
+../Core/Src/main.c:186:13:play_melody	16	static
+../Core/Src/main.c:197:13:finish_melody	8	static
+../Core/Src/main.c:205:6:get_input	32	static
+../Core/Src/main.c:305:6:UART_get_input	16	static
+../Core/Src/main.c:316:6:HAL_TIM_PeriodElapsedCallback	16	static
+../Core/Src/main.c:337:5:main	8	static
+../Core/Src/main.c:372:6:SystemClock_Config	88	static
+../Core/Src/main.c:408:6:Error_Handler	4	static,ignoring_inline_asm
