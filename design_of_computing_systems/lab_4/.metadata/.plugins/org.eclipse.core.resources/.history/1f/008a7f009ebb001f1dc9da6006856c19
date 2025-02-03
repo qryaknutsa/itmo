@@ -1,0 +1,231 @@
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "i2c.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+#include "stdio.h"
+#include "stdbool.h"
+#include "string.h"
+
+/* Private typedef -----------------------------------------------------------*/
+typedef struct {
+    uint32_t frequency;   // Частота ноты
+    uint32_t duration;    // Длительность в мс
+} Note_t;
+
+typedef enum {
+    TEST_MODE = 0,
+    MUSIC_MODE
+} OperationMode;
+
+/* Private define ------------------------------------------------------------*/
+#define CONTACT_BOUNCE_MS    20
+#define MAX_USER_MELODY      20
+#define KEYPAD_ADDRESS       0xE2
+#define COLUMN_MASK          0x07
+#define CONFIG_REG           0x03
+#define INPUT_PORT_REG       0x00
+
+/* Private variables ---------------------------------------------------------*/
+OperationMode mode = TEST_MODE;
+uint32_t lastPressedTime = 0;
+int lastPressedKey = -1;
+
+static Note_t standardMelodies[4][5] = {
+    {{440, 500}, {494, 500}, {523, 500}, {0, 500}, {440, 500}},
+    {{523, 500}, {587, 500}, {659, 500}, {0, 500}, {523, 500}},
+    {{659, 500}, {698, 500}, {784, 500}, {0, 500}, {659, 500}},
+    {{330, 500}, {349, 500}, {392, 500}, {0, 500}, {330, 500}}
+};
+
+static Note_t userMelody[MAX_USER_MELODY];
+uint8_t userMelodyCount = 0;
+bool inUserMelodyConfig = false;
+
+/* Private function prototypes -----------------------------------------------*/
+void uart_write(char *data);
+int keypad_read_key(void);
+void play_melody(Note_t *melody, uint8_t length);
+void process_key_action(int key);
+void configure_user_melody(void);
+
+/* Functions -----------------------------------------------------------------*/
+void uart_write(char *data) {
+    HAL_UART_Transmit(&huart6, (uint8_t *)data, strlen(data), 100);
+}
+
+void play_sound(uint32_t freq) {
+    if (freq == 0) {
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+    } else {
+        uint32_t arr = (1000000U / freq) - 1;
+        __HAL_TIM_SET_AUTORELOAD(&htim1, arr);
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, arr / 2);
+    }
+}
+
+void play_melody(Note_t *melody, uint8_t length) {
+    for (uint8_t i = 0; i < length; i++) {
+        play_sound(melody[i].frequency);
+        HAL_Delay(melody[i].duration);
+    }
+    play_sound(0); // Stop sound
+}
+
+void configure_user_melody(void) {
+    uart_write("\nConfiguring user melody. Enter 'freq duration' per line. End with ';'\n");
+    char buffer[32];
+    userMelodyCount = 0;
+
+    while (1) {
+        HAL_UART_Receive(&huart6, (uint8_t *)buffer, sizeof(buffer), HAL_MAX_DELAY);
+        if (strchr(buffer, ';')) break;
+
+        uint32_t freq, dur;
+        if (sscanf(buffer, "%lu %lu", &freq, &dur) == 2 && userMelodyCount < MAX_USER_MELODY) {
+            userMelody[userMelodyCount++] = (Note_t){freq, dur};
+            uart_write("Note added.\n");
+        } else {
+            uart_write("Invalid input.\n");
+        }
+    }
+    uart_write("User melody configured.\n");
+}
+
+int keypad_read_key(void) {
+    uint32_t curTime = HAL_GetTick();
+    if (curTime - lastPressedTime < CONTACT_BOUNCE_MS) return -1;
+
+    uint8_t buf, keyIndex = -1;
+
+    for (int row = 0; row < 4; row++) {
+        buf = ~((uint8_t)(1 << row));
+        HAL_I2C_Mem_Write(&hi2c1, KEYPAD_ADDRESS, CONFIG_REG, 1, &buf, 1, 100);
+        HAL_Delay(10);
+
+        HAL_I2C_Mem_Read(&hi2c1, KEYPAD_ADDRESS, INPUT_PORT_REG, 1, &buf, 1, 100);
+        uint8_t column = (~(buf >> 4)) & COLUMN_MASK;
+
+        if (column) {
+            keyIndex = row * 3 + __builtin_ctz(column);
+            break;
+        }
+    }
+
+    if (keyIndex != -1 && keyIndex != lastPressedKey) {
+        lastPressedTime = curTime;
+        lastPressedKey = keyIndex;
+        return keyIndex;
+    }
+    return -1;
+}
+
+void process_key_action(int key) {
+    char msg[32];
+
+
+    if (mode == TEST_MODE) {
+        sprintf(msg, "Key pressed: %d\n", key);
+        uart_write(msg);
+    } else {
+        switch (key) {
+            case 0: case 1: case 2: case 3: // Standard melodies
+                play_melody(standardMelodies[key], 5);
+                break;
+            case 4: // User melody
+                if (userMelodyCount > 0) {
+                    play_melody(userMelody, userMelodyCount);
+                } else {
+                    uart_write("No user melody configured.\n");
+                }
+                break;
+            case 5: // Enter config mode
+                configure_user_melody();
+                break;
+            default:
+                uart_write("Invalid key.\n");
+                break;
+        }
+    }
+}
+
+int main(void) {
+    HAL_Init();
+    SystemClock_Config();
+
+    MX_GPIO_Init();
+    MX_I2C1_Init();
+    MX_USART6_UART_Init();
+    MX_TIM1_Init();
+
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+    uart_write("Starting program. Press keys to interact.\n");
+
+    while (1) {
+        int key = keypad_read_key();
+        if (key != -1) {
+            process_key_action(key);
+        }
+
+        if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) == GPIO_PIN_RESET) {
+            mode = (mode == TEST_MODE) ? MUSIC_MODE : TEST_MODE;
+            uart_write(mode == TEST_MODE ? "Switched to TEST mode.\n" : "Switched to MUSIC mode.\n");
+            HAL_Delay(300);
+        }
+    }
+}
+
+
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  // Настройки тактирования согласно вашему проекту
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState       = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM       = 15;
+  RCC_OscInitStruct.PLL.PLLN       = 72;
+  RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ       = 4;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType     = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                                  |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource  = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider= RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider= RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1)
+  {
+  }
+}
+
